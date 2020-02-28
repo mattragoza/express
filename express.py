@@ -1,14 +1,5 @@
 
 
-def express(obj):
-    if isinstance(obj, Expression):
-        return obj
-    elif isinstance(obj, str):
-        return Variable(obj)
-    else:
-        return Constant(obj)
-
-
 class Expression(object):
 
     def __init__(self, *args):
@@ -25,6 +16,12 @@ class Expression(object):
 
     def __radd__(self, other):
         return Add(other, self)
+
+    def __mul__(self, other):
+        return Mul(self, other)
+
+    def __rmul__(self, other):
+        return Mul(other, self)
 
 
 class Constant(Expression):
@@ -81,12 +78,44 @@ class Add(Expression):
         return sum
 
 
+class Mul(Expression):
+
+    def __init__(self, *args):
+        self.args = [express(a) for a in args]
+
+    def __repr__(self):
+        return 'Mul({})'.format(', '.join(repr(a) for a in self.args))
+
+    def eval(self, **vars):
+        prod = 1
+        for arg in self.args:
+            prod *= arg.eval(**vars)
+        return prod
+
+    def diff(self, wrt):
+        sum = 0
+        for i, arg1 in enumerate(self.args):
+            prod = 1
+            for j, arg2 in enumerate(self.args):
+                if i == j:
+                    prod *= arg2
+                else:
+                    prod *= arg2.diff(wrt)
+            sum += prod
+        return sum
+
+
+def express(obj):
+    if isinstance(obj, Expression):
+        return obj
+    elif isinstance(obj, str):
+        return Variable(obj)
+    else:
+        return Constant(obj)
+
+
 if __name__ == '__main__':
     x = express('x')
-    y = express('y')
-    f = x + y
+    f = x*x
     print(f)
-    print(f.eval())
-    print(f.eval().eval())
-    df = f.diff(x)
-    print(df)
+    print(f.diff(wrt=x))
