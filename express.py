@@ -36,7 +36,7 @@ class Constant(Expression):
         return self.value
 
     def diff(self, wrt):
-        return 0
+        return Constant(0)
 
 
 class Variable(Expression):
@@ -54,7 +54,7 @@ class Variable(Expression):
         return vars.get(self.name, self)
 
     def diff(self, wrt):
-        return 1 if wrt == self else 0
+        return Constant(1) if wrt == self else Constant(0)
 
 
 class Add(Expression):
@@ -72,7 +72,7 @@ class Add(Expression):
         return sum
 
     def diff(self, wrt):
-        sum = 0
+        sum = Constant(0)
         for arg in self.args:
             sum += arg.diff(wrt)
         return sum
@@ -93,14 +93,14 @@ class Mul(Expression):
         return prod
 
     def diff(self, wrt):
-        sum = 0
+        sum = Constant(0)
         for i, arg1 in enumerate(self.args):
             prod = 1
             for j, arg2 in enumerate(self.args):
                 if i == j:
-                    prod *= arg2
-                else:
                     prod *= arg2.diff(wrt)
+                else:
+                    prod *= arg2
             sum += prod
         return sum
 
@@ -116,6 +116,7 @@ def express(obj):
 
 if __name__ == '__main__':
     x = express('x')
-    f = x*x
+    y = express('y')
+    f = x*y
     print(f)
     print(f.diff(wrt=x))
