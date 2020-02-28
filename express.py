@@ -32,6 +32,12 @@ class Constant(Expression):
     def __repr__(self):
         return 'Constant({})'.format(repr(self.value))
 
+    def __eq__(self, other):
+        if isinstance(other, Constant):
+            return self.value == other.value
+        else:
+            return self.value == other
+
     def eval(self, **vars):
         return self.value
 
@@ -66,16 +72,22 @@ class Add(Expression):
         return 'Add({})'.format(', '.join(repr(a) for a in self.args))
 
     def eval(self, **vars):
-        sum = 0
-        for arg in self.args:
-            sum += arg.eval(**vars)
-        return sum
+        value = 0
+        for i, arg in enumerate(self.args):
+            if i == 0:
+                value = arg.eval(**vars)
+            else:
+                value += arg.eval(**vars)
+        return value
 
     def diff(self, wrt):
-        sum = Constant(0)
-        for arg in self.args:
-            sum += arg.diff(wrt)
-        return sum
+        deriv = Constant(0)
+        for i, arg in enumerate(self.args):
+            if i == 0:
+                deriv = arg.diff(wrt)
+            else:
+                deriv += arg.diff(wrt)
+        return deriv
 
 
 class Mul(Expression):
@@ -87,22 +99,26 @@ class Mul(Expression):
         return 'Mul({})'.format(', '.join(repr(a) for a in self.args))
 
     def eval(self, **vars):
-        prod = 1
-        for arg in self.args:
-            prod *= arg.eval(**vars)
-        return prod
+        value = 1
+        for i, arg in enumerate(self.args):
+            if i == 0:
+                value = arg.eval(**vars)
+            else:
+                value *= arg.eval(**vars)
+        return value
 
     def diff(self, wrt):
-        sum = Constant(0)
-        for i, arg1 in enumerate(self.args):
-            prod = 1
-            for j, arg2 in enumerate(self.args):
-                if i == j:
-                    prod *= arg2.diff(wrt)
-                else:
-                    prod *= arg2
-            sum += prod
-        return sum
+        deriv = Constant(0)
+        for i, arg in enumerate(self.args):
+            term = arg.diff(wrt)
+            for j, arg in enumerate(self.args):
+                if j != i:
+                    term *= arg
+            if i == 0:
+                deriv = term
+            else:
+                deriv += term
+        return deriv
 
 
 def express(obj):
@@ -119,4 +135,6 @@ if __name__ == '__main__':
     y = express('y')
     f = x*y
     print(f)
+    print(f.eval())
     print(f.diff(wrt=x))
+    print(f.diff(wrt=y))
