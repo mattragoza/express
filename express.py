@@ -1,8 +1,13 @@
+import numpy as np
 
 
 class Expression(object):
+    __array_priority__ = 1
 
     def __init__(self, *args):
+        raise NotImplementedError
+
+    def simplify(self):
         raise NotImplementedError
     
     def eval(self, **vars):
@@ -26,11 +31,12 @@ class Expression(object):
 
 class Constant(Expression):
 
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, *args, **kwargs):
+        self.value = np.array(*args, **kwargs)
 
     def __repr__(self):
-        return 'Constant({})'.format(repr(self.value))
+        return type(self).__name__ + \
+            repr(self.value)[5:].replace('\n       ', ' ')
 
     def __eq__(self, other):
         if isinstance(other, Constant):
@@ -44,6 +50,9 @@ class Constant(Expression):
     def diff(self, wrt):
         return Constant(0)
 
+    def simplify(self):
+        return self
+
 
 class Variable(Expression):
 
@@ -51,7 +60,7 @@ class Variable(Expression):
         self.name = str(name)
 
     def __repr__(self):
-        return 'Variable({})'.format(repr(self.name))
+        return type(self).__name__ + '(' + self.name + ')'
 
     def __eq__(self, other):
         return isinstance(other, Variable) and self.name == other.name
@@ -60,7 +69,10 @@ class Variable(Expression):
         return vars.get(self.name, self)
 
     def diff(self, wrt):
-        return Constant(1) if wrt == self else Constant(0)
+        return Constant(1) if express(wrt) == self else Constant(0)
+
+    def simplify(self):
+        return self
 
 
 class Add(Expression):
@@ -69,7 +81,7 @@ class Add(Expression):
         self.args = [express(a) for a in args]
 
     def __repr__(self):
-        return 'Add({})'.format(', '.join(repr(a) for a in self.args))
+        return type(self).__name__ + '(' + ', '.join(map(repr, self.args)) + ')'
 
     def eval(self, **vars):
         value = 0
@@ -89,6 +101,16 @@ class Add(Expression):
                 deriv += arg.diff(wrt)
         return deriv
 
+    def simplify(self):
+        args = (a.simplify() for a in self.args)
+        args = [a for a in args if a != 0]
+        if len(args) > 1:
+            return Add(*args)
+        elif len(args) == 1:
+            return args[0]
+        else:
+            return Constant(0)
+
 
 class Mul(Expression):
 
@@ -96,7 +118,7 @@ class Mul(Expression):
         self.args = [express(a) for a in args]
 
     def __repr__(self):
-        return 'Mul({})'.format(', '.join(repr(a) for a in self.args))
+        return type(self).__name__ + '(' + ', '.join(map(repr, self.args)) + ')'
 
     def eval(self, **vars):
         value = 1
@@ -120,21 +142,30 @@ class Mul(Expression):
                 deriv += term
         return deriv
 
+    def simplify(self):
+        args = (a.simplify() for a in self.args)
+        args = [a for a in args if a != 1]
+        if len(args) > 1:
+            return Mul(*args)
+        elif len(args) == 1:
+            return args[0]
+        else:
+            return Constant(1)
 
-def express(obj):
-    if isinstance(obj, Expression):
-        return obj
-    elif isinstance(obj, str):
-        return Variable(obj)
+
+def express(object):
+    if isinstance(object, Expression):
+        return object
+    elif isinstance(object, str):
+        return Variable(object)
     else:
-        return Constant(obj)
+        return Constant(object)
 
 
 if __name__ == '__main__':
-    x = express('x')
-    y = express('y')
-    f = x*y
+    f = express('x')*'x'
     print(f)
-    print(f.eval())
-    print(f.diff(wrt=x))
-    print(f.diff(wrt=y))
+    print(f.simplify())
+    print(f.diff('x'))
+    print(f.diff('x').simplify())
+
