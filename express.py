@@ -1,32 +1,48 @@
 import numpy as np
 
 
+def express(obj):
+    if isinstance(obj, Expression):
+        return obj
+    elif isinstance(obj, str):
+        return [Variable(o) for o in obj.split()]
+    else:
+        return Constant(obj)
+
+
 class Expression(object):
-    __array_priority__ = 1
 
     def __init__(self, *args):
-        raise NotImplementedError
+        self.args = args
 
-    def simplify(self):
-        raise NotImplementedError
-    
-    def eval(self, **vars):
-        raise NotImplementedError
+    def __repr__(self):
+        type_name = type(self).__name__
+        arg_reprs = map(repr, self.args)
+        return f'{type_name}({", ".join(arg_reprs)})'
 
-    def diff(self, wrt):
-        raise NotImplementedError
+    def __neg__(self):
+        return Neg(self)
 
     def __add__(self, other):
+        if other == 0:
+            return self
+        elif self == 0:
+            return other
         return Add(self, other)
 
-    def __radd__(self, other):
-        return Add(other, self)
+    def __sub__(self, other):
+        return Add(self, -other)
 
     def __mul__(self, other):
+        if other == 0:
+            return other
+        elif self == 0:
+            return self
+        elif other == 1:
+            return self
+        elif self == 1:
+            return other
         return Mul(self, other)
-
-    def __rmul__(self, other):
-        return Mul(other, self)
 
 
 class Constant(Expression):
@@ -35,23 +51,16 @@ class Constant(Expression):
         self.value = np.array(*args, **kwargs)
 
     def __repr__(self):
-        return type(self).__name__ + \
-            repr(self.value)[5:].replace('\n       ', ' ')
+        return repr(self.value)[6:-1].replace('\n      ', '')
 
     def __eq__(self, other):
-        if isinstance(other, Constant):
-            return self.value == other.value
-        else:
-            return self.value == other
+        return self.value == other
 
     def eval(self, **vars):
         return self.value
 
     def diff(self, wrt):
         return Constant(0)
-
-    def simplify(self):
-        return self
 
 
 class Variable(Expression):
@@ -60,28 +69,34 @@ class Variable(Expression):
         self.name = str(name)
 
     def __repr__(self):
-        return type(self).__name__ + '(' + self.name + ')'
-
-    def __eq__(self, other):
-        return isinstance(other, Variable) and self.name == other.name
+        return self.name
 
     def eval(self, **vars):
         return vars.get(self.name, self)
 
     def diff(self, wrt):
-        return Constant(1) if express(wrt) == self else Constant(0)
+        return Constant(int(wrt.name == self.name))
 
-    def simplify(self):
-        return self
+
+class Neg(Expression):
+
+    def __init__(self, arg):
+        self.arg = arg
+
+    def __repr__(self):
+        return f'-{repr(self.arg)}'
+
+    def eval(self, **vars):
+        return -self.arg.eval(**vars)
+
+    def diff(self, wrt):
+        return -self.arg.diff(wrt)
 
 
 class Add(Expression):
 
-    def __init__(self, *args):
-        self.args = [express(a) for a in args]
-
     def __repr__(self):
-        return type(self).__name__ + '(' + ', '.join(map(repr, self.args)) + ')'
+        return '(' + ' + '.join(map(repr, self.args)) + ')'
 
     def eval(self, **vars):
         value = 0
@@ -101,32 +116,19 @@ class Add(Expression):
                 deriv += arg.diff(wrt)
         return deriv
 
-    def simplify(self):
-        args = (a.simplify() for a in self.args)
-        args = [a for a in args if a != 0]
-        if len(args) > 1:
-            return Add(*args)
-        elif len(args) == 1:
-            return args[0]
-        else:
-            return Constant(0)
-
 
 class Mul(Expression):
 
-    def __init__(self, *args):
-        self.args = [express(a) for a in args]
-
     def __repr__(self):
-        return type(self).__name__ + '(' + ', '.join(map(repr, self.args)) + ')'
-
+        return ''.join(map(repr, self.args))
+    
     def eval(self, **vars):
         value = 1
         for i, arg in enumerate(self.args):
             if i == 0:
                 value = arg.eval(**vars)
             else:
-                value *= arg.eval(**vars)
+                value += arg.eval(**vars)
         return value
 
     def diff(self, wrt):
@@ -135,37 +137,89 @@ class Mul(Expression):
             term = arg.diff(wrt)
             for j, arg in enumerate(self.args):
                 if j != i:
-                    term *= arg
+                    term = term * arg
             if i == 0:
                 deriv = term
             else:
                 deriv += term
         return deriv
 
-    def simplify(self):
-        args = (a.simplify() for a in self.args)
-        args = [a for a in args if a != 1]
-        if len(args) > 1:
-            return Mul(*args)
-        elif len(args) == 1:
-            return args[0]
+
+class Deriv(Expression):
+
+    def __init__(self, wrt, arg=None):
+        self.arg = arg
+        self.wrt = wrt
+
+    def __repr__(self):
+        if self.arg is None:
+            return f'∂/∂{repr(self.wrt)}'
         else:
-            return Constant(1)
+            return f'∂/∂{repr(self.wrt)} {repr(self.arg)}'
+
+    def __mul__(self, other):
+        if self.arg is None:
+            return Deriv(self.wrt, arg=other)
+        else:
+            super().__mul__(self, other)
+
+    def eval(self, **vars):
+        return self.arg.diff(wrt=self.wrt)
 
 
-def express(object):
-    if isinstance(object, Expression):
-        return object
-    elif isinstance(object, str):
-        return Variable(object)
-    else:
-        return Constant(object)
+# spatial coordinates
+x1, x2, x3, κ = express('x₁ x₂ x₃ κ')
 
+# deformation field
+u = np.array([x1 + κ * x2, x2, x3])
 
-if __name__ == '__main__':
-    f = express('x')*'x'
-    print(f)
-    print(f.simplify())
-    print(f.diff('x'))
-    print(f.diff('x').simplify())
+# del operator
+D = np.array([
+    Deriv(wrt=x1),
+    Deriv(wrt=x2),
+    Deriv(wrt=x3)
+])
 
+# deformation gradient
+F = np.outer(D, u).T
+
+# evaluate the deriatives
+for i in range(3):
+    for j in range(3):
+        F[i,j] = F[i,j].eval()
+
+# Piola stess tensor
+A, B, C, τ = express('A B C τ')
+o = express(0)
+p, q, r = τ - B*κ, o, o #express('p q r')
+P = np.array([
+    [A, τ, o],
+    [p, B, o],
+    [q, r, C]
+])
+
+# second equation of motion
+P @ F.T - F @ P.T
+
+# inverse of defomration gradient
+l = express(1)
+Finv = np.array([
+    [l, -κ, o],
+    [o, l, o],
+    [o, o, l]
+])
+F @ Finv
+
+# symmetric Piola tensor
+S = Finv @ P
+
+# unit vectors
+e1 = np.array([l, o, o])
+e2 = np.array([o, l, o])
+e3 = np.array([o, o, l])
+
+print(P)
+print(e1)
+print(P @ e1)
+print(P @ e2)
+print(P @ e3)
