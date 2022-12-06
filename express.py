@@ -4,10 +4,17 @@ import numpy as np
 def express(obj):
     if isinstance(obj, Expression):
         return obj
+    elif isinstance(obj, (list, tuple)):
+        return Tensor(obj)
     elif isinstance(obj, str):
-        return [Variable(o) for o in obj.split()]
-    else:
-        return Constant(obj)
+        objs = obj.split()
+        if len(objs) > 1:
+            return [Symbol(o) for o in objs]
+        elif len(objs) == 1:
+            return Symbol(objs[0])
+    elif isinstance(obj, (int, float)):
+        return Number(obj)
+    raise TypeError(f'cannot express {type(obj)}')
 
 
 class Expression(object):
@@ -21,37 +28,112 @@ class Expression(object):
         return f'{type_name}({", ".join(arg_reprs)})'
 
     def __neg__(self):
-        return Neg(self)
+        if self == 0:
+            return self
+        elif isinstance(self, Tensor):
+            return Tensor([-a for a in self])
+        return Negative(self)
 
     def __add__(self, other):
         if other == 0:
             return self
         elif self == 0:
             return other
+        elif isinstance(self, Tensor) and isinstance(other, Tensor):
+            same_shape = self.shape == other.shape
+            assert same_shape, 'cannot add tensors of different shapes'
+            return Tensor([a + b for a, b in zip(self, other)])
+        elif isinstance(self, Tensor):
+            return Tensor([a + other for a in self])
+        elif isinstance(other, Tensor):
+            return Tensor([self + b for b in other])
         return Add(self, other)
 
+    def __radd__(self, other):
+        return Expression.__add__(other, self)
+
     def __sub__(self, other):
+        if isinstance(self, Tensor) and isinstance(other, Tensor):
+            same_shape = self.shape == other.shape
+            assert same_shape, 'cannot subtract tensors of different shapes'
+            return Tensor([a - b for a, b in zip(self, other)])
+        elif isinstance(self, Tensor):
+            return Tensor([a - other for a in self])
+        elif isinstance(other, Tensor):
+            return Tensor([self - b for b in other])
         return Add(self, -other)
 
+    def __rsub__(self, other):
+        return Expression.__sub__(other, self)
+
     def __mul__(self, other):
-        if other == 0:
-            return other
-        elif self == 0:
-            return self
-        elif other == 1:
+        both_tensors = isinstance(self, Tensor) and isinstance(other, Tensor)
+        assert not both_tensors, 'cannot multiply two tensors'
+        if other == 1:
             return self
         elif self == 1:
             return other
-        return Mul(self, other)
+        elif isinstance(self, Tensor):
+            return Tensor([a * other for a in self])
+        elif isinstance(other, Tensor):
+            return Tensor([self * a for a in other])
+        elif other == 0:
+            return other
+        elif self == 0:
+            return self
+        return Multiply(self, other)
+
+    def __rmul__(self, other):
+        return Expression.__mul__(other, self)
+
+    def asarray(self):
+        return self
+
+    @property
+    def order(self):
+        return 0
+
+    @property
+    def shape(self):
+        return ()
+
+    def inner(self, other):
+        both_tensors = isinstance(self, Tensor) and isinstance(other, Tensor)
+        if not both_tensors:
+            return self * other
+        elif self.order > 1 and other.order > 1:
+            return Tensor([a.inner(b) for a, b in zip(self, other)])
+        elif self.order > 1:
+            return Tensor([a.inner(other) for a in self])
+        elif other.order > 1:
+            return Tensor([self.inner(b) for b in other])
+        return Add(*[a * b for a, b in zip(self, other)])
+
+    def outer(self, other):
+        both_tensors = isinstance(self, Tensor) and isinstance(other, Tensor)
+        if not both_tensors:
+            return self * other
+        elif self.order > 1 or other.order > 1:
+            raise NotImplementedError
+        return Tensor([Tensor([a * b for b in other]) for a in self])
+
+    @property
+    def T(self):
+        if self.order > 2:
+            return Tensor([a.T for a in self])
+        elif self.order == 2:
+            return Tensor(zip(*self.args))
+        else:
+            return self
 
 
-class Constant(Expression):
+class Number(Expression):
 
-    def __init__(self, *args, **kwargs):
-        self.value = np.array(*args, **kwargs)
+    def __init__(self, value):
+        self.value = value
 
     def __repr__(self):
-        return repr(self.value)[6:-1].replace('\n      ', '')
+        return repr(self.value)
 
     def __eq__(self, other):
         return self.value == other
@@ -60,10 +142,12 @@ class Constant(Expression):
         return self.value
 
     def diff(self, wrt):
-        return Constant(0)
+        if isinstance(wrt, Tensor):
+            return Tensor([self.diff(a) for a in wrt.args])
+        return Number(0)
 
 
-class Variable(Expression):
+class Symbol(Expression):
 
     def __init__(self, name):
         self.name = str(name)
@@ -75,10 +159,15 @@ class Variable(Expression):
         return vars.get(self.name, self)
 
     def diff(self, wrt):
-        return Constant(int(wrt.name == self.name))
+        if isinstance(wrt, Tensor):
+            return Tensor([self.diff(a) for a in wrt.args])
+        elif isinstance(wrt, Symbol):
+            if wrt.name == self.name:
+                return Number(1)
+        return Derivative(wrt, arg=self)
 
 
-class Neg(Expression):
+class Negative(Expression):
 
     def __init__(self, arg):
         self.arg = arg
@@ -108,7 +197,7 @@ class Add(Expression):
         return value
 
     def diff(self, wrt):
-        deriv = Constant(0)
+        deriv = Number(0)
         for i, arg in enumerate(self.args):
             if i == 0:
                 deriv = arg.diff(wrt)
@@ -117,7 +206,7 @@ class Add(Expression):
         return deriv
 
 
-class Mul(Expression):
+class Multiply(Expression):
 
     def __repr__(self):
         return ''.join(map(repr, self.args))
@@ -128,11 +217,11 @@ class Mul(Expression):
             if i == 0:
                 value = arg.eval(**vars)
             else:
-                value += arg.eval(**vars)
+                value *= arg.eval(**vars)
         return value
 
     def diff(self, wrt):
-        deriv = Constant(0)
+        deriv = Number(0)
         for i, arg in enumerate(self.args):
             term = arg.diff(wrt)
             for j, arg in enumerate(self.args):
@@ -145,81 +234,73 @@ class Mul(Expression):
         return deriv
 
 
-class Deriv(Expression):
+class Derivative(Expression):
 
     def __init__(self, wrt, arg=None):
         self.arg = arg
         self.wrt = wrt
 
     def __repr__(self):
+        wrt_repr = repr(self.wrt)
         if self.arg is None:
-            return f'∂/∂{repr(self.wrt)}'
-        else:
-            return f'∂/∂{repr(self.wrt)} {repr(self.arg)}'
+            return f'd/d{wrt_repr}'
+        arg_repr = repr(self.arg)
+        if isinstance(self.arg, (Symbol, Number)):
+            return f'd{arg_repr}/d{wrt_repr}'
+        return f'(d/d{wrt_repr} {arg_repr})'
 
     def __mul__(self, other):
         if self.arg is None:
-            return Deriv(self.wrt, arg=other)
-        else:
-            super().__mul__(self, other)
+            return Derivative(self.wrt, arg=other)
+        return Expression.__mul__(self, other)
 
     def eval(self, **vars):
-        return self.arg.diff(wrt=self.wrt)
+        if self.arg is None:
+            return self
+        return self.arg.diff(self.wrt).eval(**vars)
+
+    def diff(self, wrt):
+        if isinstance(wrt, Tensor):
+            return Tensor([Derivative(wrt=a, arg=self) for a in wrt.args])
+        return Derivative(wrt, arg=self)
 
 
-# spatial coordinates
-x1, x2, x3, κ = express('x₁ x₂ x₃ κ')
+class Tensor(Expression):
 
-# deformation field
-u = np.array([x1 + κ * x2, x2, x3])
+    def __init__(self, args):
+        self.args = [express(a) for a in args]
+        assert len(self.args) > 0, 'cannot create empty tensor'
+        assert len(set(a.shape for a in self.args)) == 1, \
+            'tensor components must be same shape'
 
-# del operator
-D = np.array([
-    Deriv(wrt=x1),
-    Deriv(wrt=x2),
-    Deriv(wrt=x3)
-])
+    def __repr__(self):
+        return str(self.asarray())
 
-# deformation gradient
-F = np.outer(D, u).T
+    def __getitem__(self, idx):
+        return self.args[idx]
 
-# evaluate the deriatives
-for i in range(3):
-    for j in range(3):
-        F[i,j] = F[i,j].eval()
+    def __iter__(self):
+        return iter(self.args)
 
-# Piola stess tensor
-A, B, C, τ = express('A B C τ')
-o = express(0)
-p, q, r = τ - B*κ, o, o #express('p q r')
-P = np.array([
-    [A, τ, o],
-    [p, B, o],
-    [q, r, C]
-])
+    def __len__(self):
+        return len(self.args)
 
-# second equation of motion
-P @ F.T - F @ P.T
+    def asarray(self):
+        return np.asarray([a.asarray() for a in self.args])
 
-# inverse of defomration gradient
-l = express(1)
-Finv = np.array([
-    [l, -κ, o],
-    [o, l, o],
-    [o, o, l]
-])
-F @ Finv
+    @property
+    def order(self):
+        return self.args[0].order + 1
 
-# symmetric Piola tensor
-S = Finv @ P
+    @property
+    def shape(self):
+        return (len(self.args),) + self.args[0].shape
 
-# unit vectors
-e1 = np.array([l, o, o])
-e2 = np.array([o, l, o])
-e3 = np.array([o, o, l])
+    def eval(self, **vars):
+        value = [a.eval(**vars) for a in self.args]
+        if any(isinstance(v, Expression) for v in value):
+            return Tensor(value)
+        return np.array(value)
 
-print(P)
-print(e1)
-print(P @ e1)
-print(P @ e2)
-print(P @ e3)
+    def diff(self, wrt):
+        return Tensor([a.diff(wrt) for a in self.args])
